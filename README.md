@@ -69,6 +69,7 @@
 +## 7) Test a manual update
 +
 +```bash
++cd inky-calendar
 +source .venv/bin/activate
 +python inky_calendar.py
 +```
