@@ -62,6 +62,10 @@
 +3. I2C -> Enable
 +4. Reboot the Pi
 +
++```bash
++sudo reboot
++```
++
 +## 7) Test a manual update
 +
 +```bash
