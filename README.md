@@ -16,7 +16,7 @@
 +
 +```bash
 +cd ~
-+git clone <YOUR_REPO_URL> inky-calendar
++git clone https://github.com/beznick-ops/Inky.git inky-calendar
 +cd inky-calendar
 +```
 +
