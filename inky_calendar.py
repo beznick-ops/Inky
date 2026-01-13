@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import logging
 import os
 import sys
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -18,14 +19,6 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover
     from backports.zoneinfo import ZoneInfo  # type: ignore
-
-try:
-    from inky import Inky
-except ImportError as exc:  # pragma: no cover
-    raise SystemExit(
-        "Missing Inky library. Install with: pip install inky[rpi]"
-    ) from exc
-
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
@@ -76,14 +69,22 @@ def load_config(path: Path) -> AppConfig:
     with path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
 
-    calendars = [
-        CalendarConfig(
-            name=entry["name"],
-            url=entry["url"],
-            color=entry["color"],
-        )
-        for entry in raw.get("calendars", [])
-    ]
+    calendars: List[CalendarConfig] = []
+    for index, entry in enumerate(raw.get("calendars", []), start=1):
+        name = entry.get("name")
+        url = entry.get("url")
+        color = entry.get("color")
+        if not name or not url:
+            raise ValueError(
+                "Each calendar entry must include both 'name' and 'url'. "
+                f"Check entry #{index} in {path}."
+            )
+        if not color:
+            raise ValueError(
+                "Each calendar entry must include a 'color' value (hex or named color). "
+                f"Check entry #{index} in {path}."
+            )
+        calendars.append(CalendarConfig(name=name, url=url, color=color))
 
     return AppConfig(
         timezone=raw.get("timezone", "UTC"),
@@ -102,8 +103,8 @@ def load_config(path: Path) -> AppConfig:
         request_timeout=int(raw.get("request_timeout", 15)),
         cache_path=raw.get("cache_path", str(DEFAULT_CACHE_PATH)),
         log_path=raw.get("log_path", str(DEFAULT_LOG_PATH)),
-        render_width=int(raw.get("render_width", 1200)),
-        render_height=int(raw.get("render_height", 1600)),
+        render_width=int(raw.get("render_width", 1600)),
+        render_height=int(raw.get("render_height", 1200)),
         inky_color=raw.get("inky_color", "multi"),
     )
 
@@ -156,8 +157,24 @@ def parse_events(
     for component in calendar.walk():
         if component.name != "VEVENT":
             continue
-        start = normalize_datetime(component.get("dtstart").dt, tz)
-        end = normalize_datetime(component.get("dtend").dt, tz)
+        start_component = component.get("dtstart")
+        if start_component is None:
+            continue
+        start_raw = start_component.dt
+        start = normalize_datetime(start_raw, tz)
+        end_component = component.get("dtend")
+        if end_component is not None:
+            end = normalize_datetime(end_component.dt, tz)
+        else:
+            duration = component.get("duration")
+            if duration is not None:
+                end = start + duration.dt
+            elif isinstance(start_raw, date) and not isinstance(start_raw, datetime):
+                end = start + timedelta(days=1)
+            else:
+                end = start + timedelta(hours=1)
+        if end <= start:
+            end = start + timedelta(minutes=1)
         title = str(component.get("summary", "Untitled"))
         for day in day_list:
             if event_overlaps_day(start, end, day):
@@ -215,12 +232,8 @@ def draw_grid(
         y = top + int((hour - hour_start) / hour_count * height)
         draw.line([(column_left, y), (column_right, y)], fill=config.grid_color, width=1)
         label = f"{hour:02d}:00"
-        label_width, label_height = draw.textsize(label, font=font)
+        label_width, label_height = measure_text(draw, label, font)
         draw.text((column_left - label_width - 6, y - label_height / 2), label, fill=label_color, font=font)
-
-
-def clamp(value: float, low: float, high: float) -> float:
-    return max(low, min(high, value))
 
 
 def event_to_block(
@@ -288,7 +301,7 @@ def wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> str:
     current: List[str] = []
     for word in words:
         candidate = " ".join(current + [word])
-        width, _ = font.getsize(candidate)
+        width, _ = measure_font_text(candidate, font)
         if width <= max_width or not current:
             current.append(word)
         else:
@@ -297,6 +310,20 @@ def wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> str:
     if current:
         lines.append(" ".join(current))
     return "\n".join(lines)
+
+
+def measure_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+) -> tuple[int, int]:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
+def measure_font_text(text: str, font: ImageFont.FreeTypeFont) -> tuple[int, int]:
+    bbox = font.getbbox(text)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
 
 def render_calendar(
@@ -368,7 +395,7 @@ def render_calendar(
     )
 
     footer_text = f"Last update: {now.strftime('%Y-%m-%d %H:%M')} {config.timezone}"
-    footer_width, _ = draw.textsize(footer_text, font=fonts["footer"])
+    footer_width, _ = measure_text(draw, footer_text, fonts["footer"])
     draw.text(
         (config.render_width - margin - footer_width, config.render_height - margin - fonts["footer"].size),
         footer_text,
@@ -380,7 +407,24 @@ def render_calendar(
 
 
 def push_to_display(config: AppConfig, image: Image.Image) -> None:
-    inky = Inky(config.inky_color)
+    try:
+        from inky import Inky
+        inky = Inky(config.inky_color)
+    except Exception as exc:  # pragma: no cover
+        try:
+            from inky.auto import auto
+        except Exception as auto_exc:  # pragma: no cover
+            raise SystemExit(
+                "Failed to import Inky. Make sure the inky package is installed in the active "
+                "virtual environment, SPI/I2C are enabled, and your Python version is supported. "
+                f"Original error: {exc}"
+            ) from auto_exc
+        else:
+            inky = auto()
+
+    target_size = (inky.width, inky.height)
+    if image.size != target_size:
+        image = image.resize(target_size, Image.LANCZOS)
     inky.set_image(image)
     inky.show()
 
@@ -390,8 +434,90 @@ def save_cache_image(config: AppConfig, image: Image.Image) -> None:
     image.save(cache_path)
 
 
+def build_demo_events(now: datetime, tz: ZoneInfo) -> List[Event]:
+    base = datetime.combine(now.date(), time(9, 0), tzinfo=tz)
+    demo_events = [
+        Event(
+            title="Daily sync (Teams)",
+            start=base + timedelta(hours=1),
+            end=base + timedelta(hours=2),
+            calendar_name="Demo A",
+            color="#FEE29B",
+        ),
+        Event(
+            title="Project planning",
+            start=base + timedelta(hours=3, minutes=30),
+            end=base + timedelta(hours=5),
+            calendar_name="Demo B",
+            color="#CDE7F5",
+        ),
+        Event(
+            title="Customer call",
+            start=base + timedelta(hours=8),
+            end=base + timedelta(hours=9, minutes=30),
+            calendar_name="Demo C",
+            color="#D5F5D0",
+        ),
+        Event(
+            title="Evening class",
+            start=base + timedelta(hours=10),
+            end=base + timedelta(hours=12),
+            calendar_name="Demo D",
+            color="#F5C9C9",
+        ),
+    ]
+    tomorrow_base = base + timedelta(days=1)
+    demo_events.extend(
+        [
+            Event(
+                title="Sprint kickoff",
+                start=tomorrow_base + timedelta(hours=1),
+                end=tomorrow_base + timedelta(hours=2, minutes=30),
+                calendar_name="Demo A",
+                color="#FEE29B",
+            ),
+            Event(
+                title="Design review",
+                start=tomorrow_base + timedelta(hours=4),
+                end=tomorrow_base + timedelta(hours=5),
+                calendar_name="Demo B",
+                color="#CDE7F5",
+            ),
+            Event(
+                title="Gym",
+                start=tomorrow_base + timedelta(hours=9),
+                end=tomorrow_base + timedelta(hours=10),
+                calendar_name="Demo C",
+                color="#D5F5D0",
+            ),
+        ]
+    )
+    return demo_events
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render calendars to Inky Impression display.")
+    parser.add_argument(
+        "--config",
+        default=os.environ.get("INKY_CONFIG", str(DEFAULT_CONFIG_PATH)),
+        help="Path to config.yaml",
+    )
+    parser.add_argument(
+        "--no-display",
+        action="store_true",
+        help="Render image without pushing to the display.",
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Render a demo image using sample events.",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
-    config_path = Path(os.environ.get("INKY_CONFIG", DEFAULT_CONFIG_PATH))
+    args = parse_args()
+    config_path = Path(args.config)
     if not config_path.exists():
         print(f"Config not found at {config_path}. Copy config.yaml.example to config.yaml.", file=sys.stderr)
         return 2
@@ -407,25 +533,27 @@ def main() -> int:
 
     events: List[Event] = []
     failed = False
-    for calendar_config in config.calendars:
-        try:
-            calendar = fetch_calendar(calendar_config, config.request_timeout)
-            events.extend(parse_events(calendar, calendar_config, tz, [today, tomorrow]))
-        except Exception as exc:  # noqa: BLE001
-            logging.exception("Failed to fetch calendar %s: %s", calendar_config.name, exc)
-            failed = True
+    if args.demo:
+        events = build_demo_events(now, tz)
+    else:
+        for calendar_config in config.calendars:
+            try:
+                calendar = fetch_calendar(calendar_config, config.request_timeout)
+                events.extend(parse_events(calendar, calendar_config, tz, [today, tomorrow]))
+            except Exception as exc:  # noqa: BLE001
+                logging.exception("Failed to fetch calendar %s: %s", calendar_config.name, exc)
+                failed = True
 
     event_groups = split_events_by_day(events, today, tomorrow)
     image = render_calendar(config, event_groups["today"], event_groups["tomorrow"], now)
 
     try:
-        push_to_display(config, image)
         save_cache_image(config, image)
+        if not args.no_display:
+            push_to_display(config, image)
         logging.info("Display updated successfully")
     except Exception as exc:  # noqa: BLE001
         logging.exception("Failed to update display: %s", exc)
-        if not failed:
-            save_cache_image(config, image)
         return 1
 
     return 0
