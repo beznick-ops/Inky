@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/pi/inky-calendar
-ExecStart=/home/pi/inky-calendar/.venv/bin/python /home/pi/inky-calendar/inky_calendar.py
-Environment=INKY_CONFIG=/home/pi/inky-calendar/config.yaml
+WorkingDirectory=/home/inky/inky-calendar
+ExecStart=/home/inky/inky-calendar/.venv/bin/python /home/inky/inky-calendar/inky_calendar.py
+Environment=INKY_CONFIG=/home/inky/inky-calendar/config.yaml
 
 [Install]
 WantedBy=multi-user.target
