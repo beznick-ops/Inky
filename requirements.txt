@@ -1,0 +1,7 @@
+inky[rpi]
+icalendar
+PyYAML
+requests
+Pillow
+gpiozero
+lgpio

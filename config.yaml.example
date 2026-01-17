@@ -1,0 +1,35 @@
+timezone: "Europe/Prague"
+background_color: "white"
+grid_color: "lightgray"
+text_color: "black"
+font_path: null
+title_font_size: 30
+body_font_size: 20
+footer_font_size: 16
+hour_start: 7
+hour_end: 22
+column_gap: 30
+margin: 24
+request_timeout: 20
+cache_path: "cache/last.png"
+log_path: "logs/inky_calendar.log"
+render_width: 1200
+render_height: 1600
+inky_color: "multi"
+rotation: 90
+button_pins: [5, 6, 16, 24]
+button_pull_up: true
+
+calendars:
+  - name: "Google Work"
+    url: "https://calendar.google.com/calendar/ical/your-private-link/basic.ics"
+    color: "#FEE29B"
+  - name: "Outlook"
+    url: "https://outlook.office365.com/owa/calendar/your-private-link/calendar.ics"
+    color: "#CDE7F5"
+  - name: "Personal"
+    url: "https://calendar.google.com/calendar/ical/your-private-link/basic.ics"
+    color: "#D5F5D0"
+  - name: "Family"
+    url: "https://calendar.google.com/calendar/ical/your-private-link/basic.ics"
+    color: "#F5C9C9"
